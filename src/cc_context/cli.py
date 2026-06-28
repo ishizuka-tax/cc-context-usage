@@ -19,19 +19,17 @@ def get_current_context_usage(session_id: str | None = None) -> dict:
     """現在の context window 使用量 + rate_limits を返す（statusLine dump 由来）。
 
     `usage_percentage` は Claude Code 公式の事前計算値。`context_window_used` は input-only
-    実績で、billing / ITPM rate limit / `/context`（次ターン推定）とは別概念。dump が
-    まだ無い / 初回応答前は `status:"incomplete"`。dump の schema が変わって必須 field を
-    欠く場合は黙って誤値を返さず error を返す（fail-loud）。
+    実績で、billing / ITPM rate limit / `/context`（次ターン推定）とは別概念。
+
+    出力 shape・session_id の扱い・staleness guard は Desktop 版と統一（共通
+    `core.build_current_usage`）。`session_id` を渡すとその session の dump を尊重し、
+    省略時のみ最新 dump に自動 fallback する。鮮度は dump file の mtime 基準で、古ければ
+    `status:"stale"`。dump がまだ無い / 初回応答前は `status:"incomplete"`、dump の schema
+    が変わって必須 field を欠く場合は黙って誤値を返さず error を返す（fail-loud）。
     """
-    path = dump_source.find_latest_dump()
-    if path is None:
-        return {
-            "error": "no context dump found (statusline-wrapper.sh 未設定か assistant turn 未経過)"
-        }
-    try:
-        return dump_source.dump_to_contract(dump_source.read_dump(path), int(time.time()))
-    except core.ContractError as e:
-        return {"error": f"dump schema mismatch: {e}", "source_file": path.name}  # basename only — 絶対パスは環境固有なので返さない (dump dir は CLAUDE_CONTEXT_DUMP_DIR, 既定 /tmp)
+    return core.build_current_usage(
+        dump_source.DumpSource(), session_id, now_ts=int(time.time())
+    )
 
 
 def main() -> None:

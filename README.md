@@ -26,9 +26,11 @@ environment but the LLM-facing tool and output shape are the same.
 
 ```
 src/cc_context/
-  core.py          shared: normalization / token limits / contract / rate-limit formatting
-  audit_source.py  Desktop adapter: reads the session audit.jsonl
-  dump_source.py   CLI adapter: reads the statusLine dump (+ fail-loud schema validation)
+  core.py          shared: normalization / token limits / contract / rate-limit formatting,
+                   the staleness/status decision, and the build_current_usage orchestrator
+                   (resolve → contract → status → validate) both adapters run
+  audit_source.py  Desktop Source: reads the session audit.jsonl
+  dump_source.py   CLI Source: reads the statusLine dump (+ fail-loud schema validation)
   desktop.py       MCP server entrypoint for Claude Desktop  (cc-context-desktop)
   cli.py           MCP server entrypoint for Claude Code CLI (cc-context-cli)
   limits.json      per-model context-window limits (package data, loaded via importlib.resources)
@@ -36,8 +38,19 @@ scripts/statusline-wrapper.sh   produces the dump the CLI adapter reads
 ```
 
 Both servers register as the MCP server **`cc-context`** and expose
-`get_current_context_usage` returning the same normalized JSON. There is **no runtime
-routing**: you install the adapter that fits your environment.
+`get_current_context_usage` returning the same normalized JSON. The procedure is unified
+in `core.build_current_usage`: both adapters honor an explicit `session_id` (auto-selecting
+the latest source only as a fallback), apply the same staleness guard, and return the same
+`status` / `last_event_age_seconds` shape. Each environment only contributes a thin
+**Source** (`DumpSource` / `AuditSource`) for the raw read. There is **no runtime routing**:
+you install the adapter that fits your environment.
+
+**Tool surface differs by data source (by design).** The CLI reads a single point-in-time
+statusLine dump, so only `get_current_context_usage` is available there. `get_context_history`
+(per-turn trend) and `get_session_meta` (session metadata) require the Desktop `audit.jsonl`'s
+event stream and metadata file, which the CLI dump does not carry — they are **Desktop-only**.
+This is a capability difference in the underlying data, not a behavioral divergence in the
+shared tool.
 
 ## Requirements
 
