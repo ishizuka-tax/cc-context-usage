@@ -27,6 +27,11 @@ $ErrorActionPreference = "Stop"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $VenvDir) { $VenvDir = Join-Path $Repo ".venv" }
 
+Write-Host "NOTE: Quit Claude Desktop before running this. While it is running, its MCP server"
+Write-Host "      process keeps files in the venv open (native .pyd/.dll), so venv removal will"
+Write-Host "      fail with an access-denied error. (Removing the config entry still works.)"
+Write-Host ""
+
 $storeCfg = Join-Path $env:LOCALAPPDATA "Packages\Claude_pzs8sxrjxfjjc\LocalCache\Roaming\Claude\claude_desktop_config.json"
 $classicCfg = Join-Path $env:APPDATA "Claude\claude_desktop_config.json"
 if ($ConfigPath) {
@@ -59,7 +64,16 @@ if ($cfg -and (Test-Path $cfg)) {
 }
 
 if (Test-Path $VenvDir) {
-  Remove-Item -Recurse -Force $VenvDir
-  Write-Host "Removed venv $VenvDir"
+  try {
+    Remove-Item -Recurse -Force -ErrorAction Stop $VenvDir
+    Write-Host "Removed venv $VenvDir"
+  } catch {
+    Write-Warning "Could not remove the venv at: $VenvDir"
+    Write-Warning "This almost always means Claude Desktop (or a Python process from this venv) is"
+    Write-Warning "still running and holding a file open (e.g. a native .pyd/.dll)."
+    Write-Warning "Fix: fully quit Claude Desktop, then re-run this script (or delete the folder by"
+    Write-Warning "hand). The config entry was already removed, so the MCP server is gone after the"
+    Write-Warning "next Claude Desktop restart regardless of the leftover venv."
+  }
 }
 Write-Host "Done. Restart Claude Desktop for the change to take effect."
