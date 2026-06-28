@@ -1,0 +1,254 @@
+"""Desktop (Cowork) データソース: host の audit.jsonl を tail-read し usage/rate/meta を返す。
+
+権威ある usage は Claude Desktop が audit.jsonl に永続化するため、host 側から直接読める
+(VM 内 read は mount snapshot 問題で不可)。window 整形・contract 計算は core に委譲。
+"""
+from __future__ import annotations
+
+import json
+import os
+import re
+import time
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from . import core
+
+DEFAULT_BASE = (
+    Path(os.environ.get("LOCALAPPDATA", str(Path.home() / "AppData" / "Local")))
+    / "Packages"
+    / "Claude_pzs8sxrjxfjjc"
+    / "LocalCache"
+    / "Roaming"
+    / "Claude"
+    / "local-agent-mode-sessions"
+)
+BASE_DIR = Path(os.environ.get("COWORK_AUDIT_BASE", str(DEFAULT_BASE)))
+TAIL_CHUNK_BYTES = 1024 * 1024
+
+# session_id は path 構築に使うため `local_<uuid>` に限定し traversal を防ぐ。
+_SESSION_ID_RE = re.compile(r"^local_[A-Za-z0-9-]+$")
+
+
+def _scan_sessions() -> list[tuple[float, Path]]:
+    found: list[tuple[float, Path]] = []
+    if not BASE_DIR.is_dir():
+        return found
+    for workspace in BASE_DIR.iterdir():
+        if not workspace.is_dir():
+            continue
+        for account in workspace.iterdir():
+            if not account.is_dir():
+                continue
+            for session in account.iterdir():
+                if not session.is_dir():
+                    continue
+                audit = session / "audit.jsonl"
+                if audit.exists():
+                    try:
+                        found.append((audit.stat().st_mtime, session))
+                    except OSError:
+                        continue
+    return found
+
+
+def resolve_session(session_id: str | None) -> Path:
+    """session_id から session ディレクトリを解決。明示 id が `local_<uuid>` 形でなければ
+    FileNotFoundError (traversal 防止)。省略時は最新 mtime の session。"""
+    sid = session_id or os.environ.get("COWORK_CONTEXT_SESSION_ID")
+    if sid:
+        if not _SESSION_ID_RE.match(sid):
+            raise FileNotFoundError(f"invalid session_id {sid!r} (expected 'local_<uuid>')")
+        if not BASE_DIR.is_dir():
+            raise FileNotFoundError(f"Base dir not found: {BASE_DIR}")
+        for workspace in BASE_DIR.iterdir():
+            if not workspace.is_dir():
+                continue
+            for account in workspace.iterdir():
+                if not account.is_dir():
+                    continue
+                candidate = account / sid
+                if (candidate / "audit.jsonl").exists():
+                    return candidate
+        raise FileNotFoundError(f"session_id {sid!r} not found under {BASE_DIR}")
+    sessions = _scan_sessions()
+    if not sessions:
+        raise FileNotFoundError(f"No audit.jsonl found under {BASE_DIR}")
+    sessions.sort(reverse=True)
+    return sessions[0][1]
+
+
+def _iter_tail_lines(path: Path, chunk_bytes: int = TAIL_CHUNK_BYTES):
+    """ファイルを末尾から逆順に line yield する generator。"""
+    with open(path, "rb") as fh:
+        fh.seek(0, os.SEEK_END)
+        position = fh.tell()
+        carry = b""
+        while position > 0:
+            read_size = min(chunk_bytes, position)
+            position -= read_size
+            fh.seek(position)
+            chunk = fh.read(read_size) + carry
+            lines = chunk.split(b"\n")
+            if position > 0:
+                carry = lines[0]
+                lines = lines[1:]
+            else:
+                carry = b""
+            for line in reversed(lines):
+                if line:
+                    yield line.decode("utf-8", errors="replace")
+
+
+def find_last_event(path: Path, event_type: str) -> dict | None:
+    for line in _iter_tail_lines(path):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") == event_type:
+            return obj
+    return None
+
+
+def find_last_event_for_session(path: Path, event_type: str, session_id: str) -> dict | None:
+    """parent (session_id=local_<uuid>) と sub (cliSessionId) の event 混在 audit で、
+    parent の値を返したい場合に使う。一致なしは None。"""
+    for line in _iter_tail_lines(path):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") == event_type and obj.get("session_id") == session_id:
+            return obj
+    return None
+
+
+def find_last_n_events(path: Path, event_type: str, n: int) -> list[dict]:
+    out: list[dict] = []
+    for line in _iter_tail_lines(path):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") == event_type:
+            out.append(obj)
+            if len(out) >= n:
+                break
+    return out
+
+
+def _find_last_rate_limit_by_type(audit_path: Path, rate_limit_type: str) -> dict | None:
+    """cowork 実機 schema (1 event = 1 type) の指定 rateLimitType の最新 event。"""
+    for line in _iter_tail_lines(audit_path):
+        try:
+            obj = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("type") != "rate_limit_event":
+            continue
+        info = obj.get("rate_limit_info") or {}
+        if info.get("rateLimitType") == rate_limit_type:
+            return obj
+    return None
+
+
+# ---------------------------------------------------------------------------
+# 高レベル API (desktop adapter が使う)
+# ---------------------------------------------------------------------------
+
+
+def latest_assistant_usage(session_dir: Path) -> tuple[dict, str] | None:
+    """parent-filter 優先で最新 assistant の (usage, model) を返す。無ければ None。"""
+    audit = session_dir / "audit.jsonl"
+    ev = find_last_event_for_session(audit, "assistant", session_dir.name) or find_last_event(
+        audit, "assistant"
+    )
+    if not ev:
+        return None
+    msg = ev.get("message", {}) or {}
+    return msg.get("usage", {}) or {}, msg.get("model", "unknown")
+
+
+def latest_rate_limits(session_dir: Path) -> dict | None:
+    """cowork 実機 schema (rate_limit_info) から {five_hour, seven_day} を core 整形で返す。"""
+    audit = session_dir / "audit.jsonl"
+    now = int(time.time())
+    out: dict[str, Any] = {}
+    for win in ("five_hour", "seven_day"):
+        e = _find_last_rate_limit_by_type(audit, win)
+        info = (e or {}).get("rate_limit_info") or {}
+        util = info.get("utilization")
+        pct = round(float(util) * 100, 1) if util is not None else None
+        w = core.format_rate_window(pct, info.get("resetsAt"), win, now)
+        if w is not None:
+            w["status"] = info.get("status")
+        out[win] = w
+    return out if any(out.values()) else None
+
+
+def result_history(session_dir: Path, n: int) -> list[dict]:
+    """直近 N result event の context window size 推移 (iterations[-1] 由来、turn 終了時点)。"""
+    audit = session_dir / "audit.jsonl"
+    events = find_last_n_events(audit, "result", n)
+    history = []
+    for ev in events:
+        usage = ev.get("usage", {}) or {}
+        iterations = usage.get("iterations", []) or []
+        src = iterations[-1] if iterations else usage
+        input_t = int(src.get("input_tokens", 0) or 0)
+        cache_c = int(src.get("cache_creation_input_tokens", 0) or 0)
+        cache_r = int(src.get("cache_read_input_tokens", 0) or 0)
+        output_t = int(src.get("output_tokens", 0) or 0)
+        history.append(
+            {
+                "ts": ev.get("_audit_timestamp"),
+                "context_window_size": input_t + cache_c + cache_r,
+                "input_tokens": input_t,
+                "cache_creation_input_tokens": cache_c,
+                "cache_read_input_tokens": cache_r,
+                "output_tokens": output_t,
+                "source": "iterations[-1]" if iterations else "usage (fallback)",
+                "is_error": ev.get("is_error"),
+            }
+        )
+    return history
+
+
+def session_meta(session_dir: Path) -> dict:
+    """local_<sessionId>.json から metadata を whitelist で返す。
+    **PII / 環境固有値 (emailAddress/cwd/processName/vmProcessName/accountName/spaceId) は返さない**。"""
+    sid = session_dir.name
+    local_json = session_dir.parent / f"{sid}.json"
+    if not local_json.exists():
+        return {"error": f"local_*.json not found: {local_json}", "session_id": sid}
+    try:
+        with open(local_json, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, json.JSONDecodeError) as e:
+        return {"error": f"Failed to read {local_json}: {e}"}
+
+    def _ts(ms: Any) -> str | None:
+        if not isinstance(ms, (int, float)):
+            return None
+        try:
+            return datetime.fromtimestamp(ms / 1000, tz=timezone.utc).isoformat()
+        except (OverflowError, OSError, ValueError):
+            return None
+
+    return {
+        "session_id": data.get("sessionId"),
+        "model": data.get("model"),
+        "title": data.get("title"),
+        "created_at": _ts(data.get("createdAt")),
+        "last_activity_at": _ts(data.get("lastActivityAt")),
+        "host_loop_mode": data.get("hostLoopMode"),
+        "memory_enabled": data.get("memoryEnabled"),
+        "skills_enabled": data.get("skillsEnabled"),
+        "plugins_enabled": data.get("pluginsEnabled"),
+        "is_archived": data.get("isArchived"),
+        "is_starred": data.get("isStarred"),
+        "system_prompt_length": len(data.get("systemPrompt") or ""),
+        "source_file": local_json.name,  # basename only — 絶対パスは環境固有値なので返さない (docstring の whitelist 方針と整合)
+    }

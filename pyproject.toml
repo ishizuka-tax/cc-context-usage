@@ -1,0 +1,18 @@
+[project]
+name = "cc-context-usage"
+version = "0.2.0"
+description = "Let Claude read its own context-window usage as a real number, across Claude Desktop (Cowork) and the Claude Code CLI."
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+dependencies = ["mcp>=1.0"]
+
+[project.scripts]
+cc-context-desktop = "cc_context.desktop:main"
+cc-context-cli = "cc_context.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cc_context"]

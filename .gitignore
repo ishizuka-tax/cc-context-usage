@@ -1,0 +1,30 @@
+# === Python ===
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.venv/
+venv/
+*.egg-info/
+
+# === Context dump files (runtime artifacts, never commit) ===
+cc-context-*.json
+
+# === OS / Editor noise ===
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# === Logs / backups / scratch ===
+*.log
+*.bak
+*.backup
+*.orig
+.tmp/
+/tmp/
+/scratch/
+.cache/

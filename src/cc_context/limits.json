@@ -1,0 +1,20 @@
+{
+  "_comment": "Cowork context window limits per model. See IMPL_NOTES.md. Update when Anthropic releases new models or changes limits.",
+  "_fallback": 1000000,
+  "models": {
+    "claude-opus-4-8": 1000000,
+    "claude-opus-4-7": 1000000,
+    "claude-opus-4-6": 1000000,
+    "claude-opus-4-5": 200000,
+    "claude-opus-4-1": 200000,
+    "claude-opus-4": 200000,
+    "claude-sonnet-4-6": 1000000,
+    "claude-sonnet-4-5": 1000000,
+    "claude-sonnet-4-1": 200000,
+    "claude-sonnet-4": 200000,
+    "claude-haiku-4-5": 200000,
+    "claude-3-7-sonnet": 200000,
+    "claude-3-5-sonnet": 200000,
+    "claude-3-5-haiku": 200000
+  }
+}

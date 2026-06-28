@@ -1,0 +1,42 @@
+cowork-context-usage
+Copyright 2026 Akinori Ishizuka
+
+This product includes software developed by Akinori Ishizuka.
+
+---
+
+This project interacts with the following external standards, specifications,
+and data formats. No source code from these is bundled; the project reads
+documented public interfaces / file formats only.
+
+  * Claude Code statusLine specification
+    stdin JSON shape: context_window.{context_window_size, used_percentage,
+    current_usage, total_input_tokens}, rate_limits.{five_hour, seven_day}
+    https://code.claude.com/docs/en/statusline
+
+  * Claude Desktop (Cowork / local agent mode) session audit log format
+    Per-session audit.jsonl and local_<sessionId>.json metadata files.
+
+  * Model Context Protocol (MCP)
+    https://modelcontextprotocol.io/
+
+---
+
+Runtime dependencies:
+
+  * Python "mcp" SDK (Model Context Protocol Python SDK)
+    Installed via pip (see mcp-server/requirements.txt); not bundled.
+    https://github.com/modelcontextprotocol/python-sdk
+
+  * jq — command-line JSON processor (used by the CLI recipe and the
+    statusLine wrapper). MIT License. Not bundled.
+    https://github.com/jqlang/jq
+
+Optional, not required:
+
+  * ccstatusline — a third-party Claude Code status line renderer. The
+    bundled statusline-wrapper.sh uses it as the default display command if
+    present, and falls back to a dump-only mode if it is not installed.
+    See its own repository for its license and terms.
+
+These tools are not statically linked or repackaged by this project.
