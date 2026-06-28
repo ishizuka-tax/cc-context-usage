@@ -39,6 +39,16 @@ Both servers register as the MCP server **`cc-context`** and expose
 `get_current_context_usage` returning the same normalized JSON. There is **no runtime
 routing**: you install the adapter that fits your environment.
 
+## Requirements
+
+- **Python 3.10+** — the MCP server is a Python package. The installers create a venv and
+  `pip install` into it; they auto-detect an existing interpreter but **do not install Python
+  itself**. On Windows the `python` on PATH is often the Microsoft Store *alias stub* (not a
+  real interpreter) — install real Python via the [`py` launcher / python.org](https://www.python.org/downloads/)
+  or `winget install Python.Python.3.12` (the installer then finds it automatically).
+- **Claude Desktop** (Cowork) and/or **Claude Code CLI** — install the adapter for whichever you use.
+- **git** — to clone this repo (it is clone-and-run-in-place; see the next section).
+
 ## Working directory & where it installs
 
 **Choose a permanent location first, clone there, then install** — the directory you clone
