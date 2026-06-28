@@ -72,6 +72,25 @@ def test_cli_unknown_session_id_errors(tmp_path, monkeypatch):
     assert "error" in r
 
 
+def test_cli_rejects_sanitize_collision(tmp_path, monkeypatch):
+    """sanitize 衝突 ('abc.def' と 'abc_def' は同一ファイル名) で別 dump を黙って返さない。
+    要求 session_id と dump 内部 session_id の不一致を検出して error にする。"""
+    monkeypatch.setenv("CLAUDE_CONTEXT_DUMP_DIR", str(tmp_path))
+    _write_dump(tmp_path, "abc_def", 33.0)  # ファイル名 cc-context-abc_def.json, 内部 id=abc_def
+    r = cli.get_current_context_usage(session_id="abc.def")  # _safe_id→abc_def で同ファイルに解決
+    assert "error" in r  # 内部 id 'abc_def' != 要求 'abc.def' → 誤マッチ拒否
+    assert r.get("usage_percentage") != 33.0
+
+
+def test_cli_not_found_error_does_not_echo_raw_session_id(tmp_path, monkeypatch):
+    """privacy: 呼出側が path/PII を session_id に渡しても error にそのまま載せない。"""
+    monkeypatch.setenv("CLAUDE_CONTEXT_DUMP_DIR", str(tmp_path))
+    leaky = "/home/secret/user/path"
+    r = cli.get_current_context_usage(session_id=leaky)
+    assert "error" in r
+    assert leaky not in r["error"]  # raw 値を echo しない
+
+
 def test_cli_current_usage(dump_file, monkeypatch):
     monkeypatch.setattr(dump_source, "find_latest_dump", lambda dump_dir=None: dump_file)
     r = cli.get_current_context_usage()

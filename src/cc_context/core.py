@@ -183,6 +183,13 @@ def build_current_usage(source, session_id: str | None, *, now_ts: int) -> dict:
         out = source.build_contract(handle, now_ts)
     except ContractError as e:
         return {"error": f"source schema mismatch: {e}", "source_file": source.source_file(handle)}
+    except (FileNotFoundError, OSError) as e:
+        # TOCTOU: resolve 後・読取中にソースが消えた/読めない。str(e) は絶対パスを含むため
+        # 載せず、例外型名のみ返す (basement-only privacy 方針)。
+        return {
+            "error": f"source became unavailable during read: {type(e).__name__}",
+            "source_file": source.source_file(handle),
+        }
     # terminal (取得不能 / 初回応答前) は status を被せず、そのまま返す
     if "error" in out or out.get("status") == "incomplete":
         return out

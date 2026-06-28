@@ -110,10 +110,19 @@ class _FakeSource:
     stale_label = "fake"
     precise_hint = "FAKE-HINT"
 
-    def __init__(self, *, contract=None, raise_resolve=False, raise_contract=False, auto=True):
+    def __init__(
+        self,
+        *,
+        contract=None,
+        raise_resolve=False,
+        raise_contract=False,
+        raise_fnf_in_contract=False,
+        auto=True,
+    ):
         self._contract = contract
         self._raise_resolve = raise_resolve
         self._raise_contract = raise_contract
+        self._raise_fnf_in_contract = raise_fnf_in_contract
         self._auto = auto
 
     def resolve(self, session_id):
@@ -127,6 +136,10 @@ class _FakeSource:
     def build_contract(self, handle, now_ts):
         if self._raise_contract:
             raise core.ContractError("bad shape")
+        if self._raise_fnf_in_contract:
+            # TOCTOU: resolve 後・読取時にファイルが消えた等。str(e) は絶対パスを含むので
+            # message に載せない (privacy)。
+            raise FileNotFoundError("/secret/abs/path/audit.jsonl")
         return dict(self._contract)
 
 
@@ -166,3 +179,12 @@ def test_build_current_usage_explicit_session_yields_explicit_note():
     out = core.build_current_usage(src, "local_x", now_ts=0)
     assert out["status"] == "stale"
     assert "自動選択" not in out["status_note"]  # auto=False が note に反映
+
+
+def test_build_current_usage_catches_toctou_filenotfound():
+    """resolve 後・build_contract 中にソースが消えても MCP 例外でなく error dict を返す。"""
+    src = _FakeSource(raise_fnf_in_contract=True)
+    out = core.build_current_usage(src, None, now_ts=0)
+    assert "error" in out
+    assert out["source_file"] == "fake.json"
+    assert "/secret/abs/path" not in out["error"]  # 絶対パスを error に載せない (privacy)
