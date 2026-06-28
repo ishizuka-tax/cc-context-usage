@@ -159,8 +159,28 @@ def _find_last_rate_limit_by_type(audit_path: Path, rate_limit_type: str) -> dic
 # ---------------------------------------------------------------------------
 
 
-def latest_assistant_usage(session_dir: Path) -> tuple[dict, str] | None:
-    """parent-filter 優先で最新 assistant の (usage, model) を返す。無ければ None。"""
+def _parse_iso(ts: str | None) -> datetime | None:
+    """audit の `_audit_timestamp` (例 '2026-06-28T11:37:28.871Z') を datetime に。"""
+    if not ts:
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def age_seconds(ts_iso: str | None) -> int | None:
+    """ISO timestamp から現在までの経過秒。解釈不能なら None。"""
+    dt = _parse_iso(ts_iso)
+    if dt is None:
+        return None
+    return int(datetime.now(timezone.utc).timestamp() - dt.timestamp())
+
+
+def latest_assistant_usage(session_dir: Path) -> tuple[dict, str, str | None] | None:
+    """parent-filter 優先で最新 assistant の (usage, model, audit_ts) を返す。無ければ None。
+
+    audit_ts は当該 event の `_audit_timestamp`（ISO 文字列 or None）。staleness 判定に使う。"""
     audit = session_dir / "audit.jsonl"
     ev = find_last_event_for_session(audit, "assistant", session_dir.name) or find_last_event(
         audit, "assistant"
@@ -168,7 +188,7 @@ def latest_assistant_usage(session_dir: Path) -> tuple[dict, str] | None:
     if not ev:
         return None
     msg = ev.get("message", {}) or {}
-    return msg.get("usage", {}) or {}, msg.get("model", "unknown")
+    return msg.get("usage", {}) or {}, msg.get("model", "unknown"), ev.get("_audit_timestamp")
 
 
 def latest_rate_limits(session_dir: Path) -> dict | None:
