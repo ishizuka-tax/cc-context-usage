@@ -65,8 +65,9 @@ re-run `install-cli.sh` from the new location to re-wire the paths.)
 **Quick (Windows):** `powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1`
 — creates a venv, installs the package, and merges the `cc-context` entry into
 `claude_desktop_config.json` (backing it up first). Then restart Claude Desktop.
-(If `python` is the Microsoft Store alias stub, pass a real interpreter:
-`... install-desktop.ps1 -PythonExe py`.) Manual steps:
+(It auto-detects a working interpreter — the `py` launcher, then `python`/`python3` —
+and ignores the Microsoft Store alias stub; override with `-PythonExe py` if needed.)
+Manual steps:
 
 ```bash
 pip install .

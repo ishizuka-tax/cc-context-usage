@@ -10,11 +10,12 @@
     powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1 `
         [-VenvDir <path>] [-ConfigPath <path>] [-PythonExe <path-or-name>]
 
-  Note: -PythonExe defaults to "python". On Windows where `python` is the Microsoft
-  Store alias stub (no real interpreter), pass a real one, e.g. -PythonExe py
-  (the Python launcher) or -PythonExe "C:\Path\to\python.exe".
+  Note: by default this auto-detects a *working* interpreter (tries the `py` launcher,
+  then `python`, then `python3`) and ignores the Microsoft Store alias stub that ships as
+  `python` on many Windows installs. Override with -PythonExe py or
+  -PythonExe "C:\Path\to\python.exe" if you want a specific one.
 #>
-param([string]$VenvDir, [string]$ConfigPath, [string]$PythonExe = "python")
+param([string]$VenvDir, [string]$ConfigPath, [string]$PythonExe)
 
 function Format-Json {
   # Re-indent ConvertTo-Json output to 2 spaces. Windows PowerShell 5.1's ConvertTo-Json
@@ -31,13 +32,48 @@ function Format-Json {
   }) -join "`r`n"
 }
 
+function Resolve-PythonExe {
+  # Return the absolute path of a *working* python.exe, or $null. Rejects the Microsoft
+  # Store alias stub (which fails to actually run `-c`). Tries the preferred name first,
+  # else the py launcher, then python/python3.
+  param([string]$Preferred)
+  $tries = if ($Preferred) { @($Preferred) } else { @("py", "python", "python3") }
+  foreach ($t in $tries) {
+    $probe = @("-c", "import sys; print(sys.executable)")
+    if ($t -ieq "py") { $probe = @("-3") + $probe }
+    try {
+      $out = & $t @probe 2>$null
+      if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($out)) {
+        $exe = ($out | Select-Object -First 1).Trim()
+        if (Test-Path $exe) { return $exe }
+      }
+    } catch { }
+  }
+  return $null
+}
+
 $ErrorActionPreference = "Stop"
 $Repo = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 if (-not $VenvDir) { $VenvDir = Join-Path $Repo ".venv" }
 
-Write-Host "==> Creating venv at $VenvDir and installing the package (python: $PythonExe)"
-& $PythonExe -m venv $VenvDir
+$RealPy = Resolve-PythonExe $PythonExe
+if (-not $RealPy) {
+  throw @"
+No working Python interpreter found.
+'python' on PATH may be the Microsoft Store alias stub (it does not actually run Python).
+Fix one of:
+  - install Python:  winget install Python.Python.3.12   (or python.org, tick 'Add to PATH')
+    then re-run this script (it auto-detects the 'py' launcher / python), or
+  - pass one explicitly:  -PythonExe py   |   -PythonExe C:\path\to\python.exe
+"@
+}
+
+Write-Host "==> Creating venv at $VenvDir and installing the package (python: $RealPy)"
+& $RealPy -m venv $VenvDir
 $Py = Join-Path $VenvDir "Scripts\python.exe"
+if (-not (Test-Path $Py)) {
+  throw "venv creation did not produce '$Py' (interpreter '$RealPy' may have failed). Try: -PythonExe py"
+}
 & $Py -m pip install --quiet --upgrade pip
 & $Py -m pip install $Repo
 
