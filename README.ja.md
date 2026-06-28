@@ -39,6 +39,16 @@ scripts/statusline-wrapper.sh   CLI アダプタが読む dump を生成する
 `get_current_context_usage` を公開します。**実行時のルーティングはありません**。
 自分の環境に合うアダプタをインストールしてください。
 
+## 必要要件
+
+- **Python 3.10+** — MCP サーバーは Python パッケージです。インストーラは venv を作って
+  `pip install` しますが、既存の interpreter を自動検出するだけで **Python 自体は入れません**。
+  Windows の PATH 上の `python` は Microsoft Store の *alias stub*（実体なし）のことが多いので、
+  本物の Python を [`py` ランチャー / python.org](https://www.python.org/downloads/) か
+  `winget install Python.Python.3.12` で導入してください（導入後はインストーラが自動検出します）。
+- **Claude Desktop**（Cowork）および/または **Claude Code CLI** — 使う方のアダプタを入れます。
+- **git** — この repo を clone するため（clone-and-run-in-place。次節参照）。
+
 ## 作業ディレクトリと install 先
 
 **まず恒久的な置き場所を決め、そこに clone してから install してください** — clone 先の
