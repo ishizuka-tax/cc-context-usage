@@ -34,7 +34,8 @@ def get_current_context_usage(session_id: str | None = None) -> dict:
     返り値の `status`（"ok"/"stale"/"unknown"）と `last_event_age_seconds` で鮮度を判断できる。
     手動確認だけなら `/context` でもよい。
     """
-    explicit = session_id is not None
+    # 明示 session_id も COWORK_CONTEXT_SESSION_ID env も無い時だけ「自動選択」(stale note 用)
+    auto_selected = not session_id and not os.environ.get("COWORK_CONTEXT_SESSION_ID")
     try:
         sdir = audit_source.resolve_session(session_id)
     except FileNotFoundError as e:
@@ -50,7 +51,7 @@ def get_current_context_usage(session_id: str | None = None) -> dict:
     out["rate_limits"] = audit_source.latest_rate_limits(sdir)
     # --- staleness guard: 黙って別セッション/古い値を返さない ---
     age = audit_source.age_seconds(audit_ts)
-    out["last_event_ts"] = audit_ts
+    out["last_event_ts"] = audit_ts if isinstance(audit_ts, str) else None
     out["last_event_age_seconds"] = age
     try:
         threshold = int(os.environ.get("CC_CONTEXT_STALE_SECONDS", DEFAULT_STALE_SECONDS))
@@ -59,15 +60,18 @@ def get_current_context_usage(session_id: str | None = None) -> dict:
     if age is None:
         out["status"] = "unknown"
         out["status_note"] = "audit timestamp を解釈できず、鮮度を判定できません。"
+    elif age < 0:
+        out["status"] = "unknown"
+        out["status_note"] = "audit timestamp が未来（clock skew / 破損の可能性）で鮮度を判定できません。"
     elif age > threshold:
         out["status"] = "stale"
         out["status_note"] = (
             f"選択した audit は {age}s 前のもの（しきい値 {threshold}s 超）。"
             + (
-                "指定セッションの値ですが、最新ターンがまだ flush されていない可能性があります。"
-                if explicit
-                else "自動選択のため、別（過去の）セッションを掴んでいるか、現ターンが未 flush の"
+                "自動選択のため、別（過去の）セッションを掴んでいるか、現ターンが未 flush の"
                 "可能性があります。正確には session_id（作業ディレクトリの local_<uuid>）を渡してください。"
+                if auto_selected
+                else "指定セッションの値ですが、最新ターンがまだ flush されていない可能性があります。"
             )
         )
     else:

@@ -1,38 +1,60 @@
-import datetime
-import json
-
 from cc_context import audit_source, desktop
 
 
-def test_get_current_usage_returns_contract(audit_session, monkeypatch):
+def _patch(monkeypatch, audit_session, age):
+    """resolve_session を fixture に固定し、age_seconds を決定値に固定 (wall-clock 非依存)。"""
+    monkeypatch.delenv("CC_CONTEXT_STALE_SECONDS", raising=False)
+    monkeypatch.delenv("COWORK_CONTEXT_SESSION_ID", raising=False)
     monkeypatch.setattr(audit_source, "resolve_session", lambda sid=None: audit_session)
+    monkeypatch.setattr(audit_source, "age_seconds", lambda ts: age)
+
+
+def test_get_current_usage_returns_contract(audit_session, monkeypatch):
+    _patch(monkeypatch, audit_session, age=10)
     r = desktop.get_current_context_usage()
     assert r["session_id_kind"] == "cowork_local"
     assert r["context_window_used"] == 2 + 838 + 56544
     assert r["rate_limits"]["five_hour"]["used_percentage"] == 99.0
     assert "email_address" not in r  # PII 非混入
+    assert r["status"] == "ok"
 
 
-def test_staleness_flag_stale_for_old_audit(audit_session, monkeypatch):
-    # fixture の assistant ts は 2026-06-27（古い）→ stale。ただし数値は返す。
-    monkeypatch.setattr(audit_source, "resolve_session", lambda sid=None: audit_session)
+def test_status_stale_when_old_and_auto(audit_session, monkeypatch):
+    _patch(monkeypatch, audit_session, age=99999)  # 既定しきい値 600 超
     r = desktop.get_current_context_usage()
     assert r["status"] == "stale"
-    assert r["last_event_age_seconds"] > 0
+    assert r["last_event_age_seconds"] == 99999
+    assert "session_id" in r["status_note"]  # 自動選択 → session_id 誘導
     assert r["context_window_used"] == 2 + 838 + 56544  # 数値は withhold しない
 
 
-def test_staleness_flag_ok_for_fresh_audit(audit_session, monkeypatch):
-    fresh = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
-    audit = audit_session / "audit.jsonl"
-    objs = [json.loads(line) for line in audit.read_text().splitlines()]
-    for o in objs:
-        if o.get("type") == "assistant":
-            o["_audit_timestamp"] = fresh
-    audit.write_text("\n".join(json.dumps(o) for o in objs) + "\n", encoding="utf-8")
+def test_stale_note_differs_when_explicit(audit_session, monkeypatch):
+    _patch(monkeypatch, audit_session, age=99999)
+    r = desktop.get_current_context_usage(session_id="local_11111111-2222-3333-4444-555555555555")
+    assert r["status"] == "stale"
+    assert "自動選択" not in r["status_note"]  # 明示指定 → auto note ではない
+
+
+def test_status_unknown_when_age_none(audit_session, monkeypatch):
+    _patch(monkeypatch, audit_session, age=None)  # parse 不能
+    assert desktop.get_current_context_usage()["status"] == "unknown"
+
+
+def test_status_unknown_when_future(audit_session, monkeypatch):
+    _patch(monkeypatch, audit_session, age=-50)  # 未来 ts / clock skew
+    assert desktop.get_current_context_usage()["status"] == "unknown"
+
+
+def test_status_ok_at_threshold_boundary(audit_session, monkeypatch):
+    _patch(monkeypatch, audit_session, age=600)  # age == 既定しきい値 → ok (> 判定)
+    assert desktop.get_current_context_usage()["status"] == "ok"
+
+
+def test_invalid_env_threshold_falls_back_to_default(audit_session, monkeypatch):
     monkeypatch.setattr(audit_source, "resolve_session", lambda sid=None: audit_session)
-    r = desktop.get_current_context_usage()
-    assert r["status"] == "ok"
+    monkeypatch.setattr(audit_source, "age_seconds", lambda ts: 700)
+    monkeypatch.setenv("CC_CONTEXT_STALE_SECONDS", "not-an-int")  # 既定 600 に fallback → 700>600 stale
+    assert desktop.get_current_context_usage()["status"] == "stale"
 
 
 def test_get_session_meta_excludes_pii(audit_session, monkeypatch):
