@@ -63,8 +63,8 @@ scripts/statusline-wrapper.sh   CLI アダプタが読む dump を生成する
 **簡単（Windows）:** `powershell -ExecutionPolicy Bypass -File scripts\install-desktop.ps1`
 — venv 作成・パッケージ install・`claude_desktop_config.json` への `cc-context` エントリ
 マージ（事前に backup）を行います。その後 Claude Desktop を再起動してください。
-（`python` が Microsoft Store の alias stub の場合は実体を渡す:
-`... install-desktop.ps1 -PythonExe py`）。手動手順:
+（動作する実体を自動検出します — `py` ランチャー→`python`/`python3` の順、Microsoft Store の
+alias stub は無視。必要なら `-PythonExe py` で上書き。）手動手順:
 
 ```bash
 pip install .
