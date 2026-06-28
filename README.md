@@ -101,6 +101,19 @@ Restart Claude Desktop. Ask Claude to run `get_current_context_usage`.
 (`get_context_history` and `get_session_meta` are also available; `get_session_meta`
 deliberately does **not** return PII such as email / cwd / process names.)
 
+### Desktop accuracy (best-effort)
+
+On Desktop the MCP server is a shared process that is **not told which conversation is
+calling it**, and the cowork audit log is flushed at turn end. So with `session_id` omitted it
+**auto-selects the most recently written audit**, which can be a *previous* session (e.g. a
+brand-new conversation before its first flush) or lag by one turn. The result therefore carries
+`status` (`ok`/`stale`/`unknown`) and `last_event_age_seconds` so you can judge freshness, and
+it never silently withholds the numbers. **For an exact reading, pass `session_id`** — in cowork
+it is the `local_<uuid>` at the end of your working directory. (`CC_CONTEXT_STALE_SECONDS`
+tunes the stale threshold, default 600.) For a quick manual check, `/context` also works. The
+**CLI adapter is the reliable path** (statusLine delivers the current session's number every
+turn).
+
 ## Install — Claude Code CLI
 
 **Quick:** `scripts/install-cli.sh` — creates a venv, installs the package, registers the

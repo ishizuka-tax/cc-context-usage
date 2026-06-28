@@ -61,7 +61,8 @@ def resolve_session(session_id: str | None) -> Path:
         if not _SESSION_ID_RE.match(sid):
             raise FileNotFoundError(f"invalid session_id {sid!r} (expected 'local_<uuid>')")
         if not BASE_DIR.is_dir():
-            raise FileNotFoundError(f"Base dir not found: {BASE_DIR}")
+            # 絶対パス (username 等) を error に載せない (basename-only privacy 方針)
+            raise FileNotFoundError("cowork audit base dir not found (set COWORK_AUDIT_BASE?)")
         for workspace in BASE_DIR.iterdir():
             if not workspace.is_dir():
                 continue
@@ -71,10 +72,10 @@ def resolve_session(session_id: str | None) -> Path:
                 candidate = account / sid
                 if (candidate / "audit.jsonl").exists():
                     return candidate
-        raise FileNotFoundError(f"session_id {sid!r} not found under {BASE_DIR}")
+        raise FileNotFoundError(f"session_id {sid!r} not found")
     sessions = _scan_sessions()
     if not sessions:
-        raise FileNotFoundError(f"No audit.jsonl found under {BASE_DIR}")
+        raise FileNotFoundError("no cowork audit.jsonl found (no active session?)")
     sessions.sort(reverse=True)
     return sessions[0][1]
 
@@ -159,8 +160,29 @@ def _find_last_rate_limit_by_type(audit_path: Path, rate_limit_type: str) -> dic
 # ---------------------------------------------------------------------------
 
 
-def latest_assistant_usage(session_dir: Path) -> tuple[dict, str] | None:
-    """parent-filter 優先で最新 assistant の (usage, model) を返す。無ければ None。"""
+def _parse_iso(ts: str | None) -> datetime | None:
+    """audit の `_audit_timestamp` (例 '2026-06-28T11:37:28.871Z') を datetime に。
+    非 str (None / malformed audit の数値等) や parse 不能は None。"""
+    if not isinstance(ts, str):
+        return None
+    try:
+        return datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+
+
+def age_seconds(ts_iso: str | None) -> int | None:
+    """ISO timestamp から現在までの経過秒。解釈不能なら None。"""
+    dt = _parse_iso(ts_iso)
+    if dt is None:
+        return None
+    return int(datetime.now(timezone.utc).timestamp() - dt.timestamp())
+
+
+def latest_assistant_usage(session_dir: Path) -> tuple[dict, str, str | None] | None:
+    """parent-filter 優先で最新 assistant の (usage, model, audit_ts) を返す。無ければ None。
+
+    audit_ts は当該 event の `_audit_timestamp`（ISO 文字列 or None）。staleness 判定に使う。"""
     audit = session_dir / "audit.jsonl"
     ev = find_last_event_for_session(audit, "assistant", session_dir.name) or find_last_event(
         audit, "assistant"
@@ -168,7 +190,7 @@ def latest_assistant_usage(session_dir: Path) -> tuple[dict, str] | None:
     if not ev:
         return None
     msg = ev.get("message", {}) or {}
-    return msg.get("usage", {}) or {}, msg.get("model", "unknown")
+    return msg.get("usage", {}) or {}, msg.get("model", "unknown"), ev.get("_audit_timestamp")
 
 
 def latest_rate_limits(session_dir: Path) -> dict | None:
@@ -222,12 +244,13 @@ def session_meta(session_dir: Path) -> dict:
     sid = session_dir.name
     local_json = session_dir.parent / f"{sid}.json"
     if not local_json.exists():
-        return {"error": f"local_*.json not found: {local_json}", "session_id": sid}
+        # 絶対パスを error に載せない (basename-only privacy 方針)
+        return {"error": f"session meta file not found for {sid}", "session_id": sid}
     try:
         with open(local_json, encoding="utf-8") as fh:
             data = json.load(fh)
     except (OSError, json.JSONDecodeError) as e:
-        return {"error": f"Failed to read {local_json}: {e}"}
+        return {"error": f"failed to read session meta for {sid}: {type(e).__name__}", "session_id": sid}
 
     def _ts(ms: Any) -> str | None:
         if not isinstance(ms, (int, float)):
