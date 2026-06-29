@@ -220,10 +220,13 @@ def result_history(session_dir: Path, n: int) -> list[dict]:
     """直近 N 件の「実測のある turn 終了時点」context window size 推移 (newest-first)。
 
     cowork の audit には usage payload を持たない result event (iterations も top-level
-    usage tokens も空 → context_window_size 0) や is_error の result event も書かれる。
-    これらは「窓が 0 に落ちた」かのように見える spike 検出のノイズなので **除外**し、
-    実測のある行 (context_window_size > 0 かつ非 error) のみを最大 N 件返す。
-    そのため N 件揃えるのに N 件以上の result event を走査することがある。"""
+    usage tokens も空 → context_window_size 0) も書かれる。これは「窓が 0 に落ちた」かの
+    ように見える spike 検出のノイズなので **除外**し、実測のある行 (context_window_size > 0)
+    のみを最大 N 件返す。そのため N 件揃えるのに N 件以上の result event を走査することがある。
+    is_error の result event でも実測がある行 (失敗 / overflow turn の spike) は残し、
+    返り値の `is_error` flag で示す (消費側がさらに絞れる)。"""
+    if n <= 0:
+        return []
     audit = session_dir / "audit.jsonl"
     history = []
     for ev in _iter_events(audit, "result"):
@@ -235,8 +238,8 @@ def result_history(session_dir: Path, n: int) -> list[dict]:
         cache_r = int(src.get("cache_read_input_tokens", 0) or 0)
         output_t = int(src.get("output_tokens", 0) or 0)
         window = input_t + cache_c + cache_r
-        # 実測なし (0) と error turn は計測値でないのでスキップ
-        if window <= 0 or ev.get("is_error"):
+        # 実測のない (window 0) 行は「窓が 0」と誤読されるノイズなのでスキップ
+        if window <= 0:
             continue
         history.append(
             {

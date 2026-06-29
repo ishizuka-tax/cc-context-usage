@@ -64,6 +64,25 @@ def test_get_session_meta_excludes_pii(audit_session, monkeypatch):
     assert "cwd" not in m and "email_address" not in m
 
 
+def test_get_context_history_sanitizes_read_error(audit_session, monkeypatch):
+    """resolve 後の read で audit が消えた等の OSError は握り潰し、絶対パスを leak しない。"""
+    monkeypatch.setattr(audit_source, "resolve_session", lambda sid=None: audit_session)
+
+    def _boom(sdir, n):
+        raise FileNotFoundError(f"{sdir}/audit.jsonl gone")  # 絶対パス入りの例外
+
+    monkeypatch.setattr(audit_source, "result_history", _boom)
+    r = desktop.get_context_history()
+    assert "history" not in r
+    assert r["source_file"] == "audit.jsonl"  # basename only
+    assert str(audit_session) not in r["error"]  # 絶対パス非露出
+
+
+def test_get_context_history_rejects_nonpositive_n(audit_session, monkeypatch):
+    monkeypatch.setattr(audit_source, "resolve_session", lambda sid=None: audit_session)
+    assert "error" in desktop.get_context_history(n=0)
+
+
 def test_docstring_defines_the_number():
     d = desktop.get_current_context_usage.__doc__ or ""
     assert "input" in d and "billing" in d and "/context" in d  # 定義が docstring に内蔵

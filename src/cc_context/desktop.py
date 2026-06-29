@@ -42,14 +42,20 @@ def get_current_context_usage(session_id: str | None = None) -> dict:
 def get_context_history(session_id: str | None = None, n: int = 10) -> dict:
     """直近 N 件の実測 context window size 推移（spike 検出用）。各値は result event の
     iterations[-1] 由来（turn 終了時点、1M を超えない）。usage payload を持たない
-    result event や is_error 行は計測値でないため除外される（result_history 参照）。"""
+    result event（context_window_size 0 のノイズ）は除外される（result_history 参照）。"""
     if n <= 0:
         return {"error": "n must be positive"}
     try:
         sdir = audit_source.resolve_session(session_id)
     except FileNotFoundError as e:
         return {"error": str(e)}
-    return {"session_id": sdir.name, "history": audit_source.result_history(sdir, n)}
+    try:
+        history = audit_source.result_history(sdir, n)
+    except (FileNotFoundError, OSError):
+        # resolve 後に audit.jsonl が消える / 読めなくなった場合。例外文字列には絶対パスが
+        # 載るため握り潰し、basename-only 方針を守って sanitize したエラーを返す。
+        return {"error": "audit source became unavailable during read", "source_file": "audit.jsonl"}
+    return {"session_id": sdir.name, "history": history}
 
 
 @mcp.tool()
