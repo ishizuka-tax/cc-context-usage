@@ -40,8 +40,9 @@ def get_current_context_usage(session_id: str | None = None) -> dict:
 
 @mcp.tool()
 def get_context_history(session_id: str | None = None, n: int = 10) -> dict:
-    """直近 N ターンの context window size 推移（spike 検出用）。各値は result event の
-    iterations[-1] 由来（turn 終了時点、1M を超えない）。"""
+    """直近 N 件の実測 context window size 推移（spike 検出用）。各値は result event の
+    iterations[-1] 由来（turn 終了時点、1M を超えない）。usage payload を持たない
+    result event や is_error 行は計測値でないため除外される（result_history 参照）。"""
     if n <= 0:
         return {"error": "n must be positive"}
     try:
