@@ -126,17 +126,23 @@ def find_last_event_for_session(path: Path, event_type: str, session_id: str) ->
     return None
 
 
-def find_last_n_events(path: Path, event_type: str, n: int) -> list[dict]:
-    out: list[dict] = []
+def _iter_events(path: Path, event_type: str):
+    """指定 type の event を末尾から (newest-first) 逐次 yield する generator。"""
     for line in _iter_tail_lines(path):
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
         if obj.get("type") == event_type:
-            out.append(obj)
-            if len(out) >= n:
-                break
+            yield obj
+
+
+def find_last_n_events(path: Path, event_type: str, n: int) -> list[dict]:
+    out: list[dict] = []
+    for obj in _iter_events(path, event_type):
+        out.append(obj)
+        if len(out) >= n:
+            break
     return out
 
 
@@ -211,11 +217,19 @@ def latest_rate_limits(session_dir: Path) -> dict | None:
 
 
 def result_history(session_dir: Path, n: int) -> list[dict]:
-    """直近 N result event の context window size 推移 (iterations[-1] 由来、turn 終了時点)。"""
+    """直近 N 件の「実測のある turn 終了時点」context window size 推移 (newest-first)。
+
+    cowork の audit には usage payload を持たない result event (iterations も top-level
+    usage tokens も空 → context_window_size 0) も書かれる。これは「窓が 0 に落ちた」かの
+    ように見える spike 検出のノイズなので **除外**し、実測のある行 (context_window_size > 0)
+    のみを最大 N 件返す。そのため N 件揃えるのに N 件以上の result event を走査することがある。
+    is_error の result event でも実測がある行 (失敗 / overflow turn の spike) は残し、
+    返り値の `is_error` flag で示す (消費側がさらに絞れる)。"""
+    if n <= 0:
+        return []
     audit = session_dir / "audit.jsonl"
-    events = find_last_n_events(audit, "result", n)
     history = []
-    for ev in events:
+    for ev in _iter_events(audit, "result"):
         usage = ev.get("usage", {}) or {}
         iterations = usage.get("iterations", []) or []
         src = iterations[-1] if iterations else usage
@@ -223,10 +237,14 @@ def result_history(session_dir: Path, n: int) -> list[dict]:
         cache_c = int(src.get("cache_creation_input_tokens", 0) or 0)
         cache_r = int(src.get("cache_read_input_tokens", 0) or 0)
         output_t = int(src.get("output_tokens", 0) or 0)
+        window = input_t + cache_c + cache_r
+        # 実測のない (window 0) 行は「窓が 0」と誤読されるノイズなのでスキップ
+        if window <= 0:
+            continue
         history.append(
             {
                 "ts": ev.get("_audit_timestamp"),
-                "context_window_size": input_t + cache_c + cache_r,
+                "context_window_size": window,
                 "input_tokens": input_t,
                 "cache_creation_input_tokens": cache_c,
                 "cache_read_input_tokens": cache_r,
@@ -235,6 +253,8 @@ def result_history(session_dir: Path, n: int) -> list[dict]:
                 "is_error": ev.get("is_error"),
             }
         )
+        if len(history) >= n:
+            break
     return history
 
 

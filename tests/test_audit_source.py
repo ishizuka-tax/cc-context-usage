@@ -1,6 +1,91 @@
+import json
+from pathlib import Path
+
 import pytest
 
 from cc_context import audit_source as a
+
+
+def _write_results(tmp_path: Path, events: list[dict]) -> Path:
+    """result event を渡された順 (= 古い順、末尾が最新) で audit.jsonl に書き、session dir を返す。"""
+    base = tmp_path / "ws" / "acct" / "local_aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee"
+    base.mkdir(parents=True)
+    lines = [{"type": "result", **ev} for ev in events]
+    (base / "audit.jsonl").write_text(
+        "\n".join(json.dumps(o) for o in lines) + "\n", encoding="utf-8"
+    )
+    return base
+
+
+def _iter_usage(cache_read: int) -> dict:
+    return {"input_tokens": 2, "cache_creation_input_tokens": 100, "cache_read_input_tokens": cache_read, "output_tokens": 50}
+
+
+def test_result_history_uses_iterations_last(tmp_path):
+    sess = _write_results(tmp_path, [
+        {"is_error": False, "_audit_timestamp": "ts-a",
+         "usage": {"iterations": [_iter_usage(1000), _iter_usage(5000)]}},
+    ])
+    hist = a.result_history(sess, 10)
+    assert len(hist) == 1
+    assert hist[0]["source"] == "iterations[-1]"
+    assert hist[0]["context_window_size"] == 2 + 100 + 5000  # iterations[-1] のみ
+
+
+def test_result_history_falls_back_to_top_level_usage(tmp_path):
+    sess = _write_results(tmp_path, [
+        {"is_error": False, "_audit_timestamp": "ts-a", "usage": _iter_usage(6000)},
+    ])
+    hist = a.result_history(sess, 10)
+    assert len(hist) == 1
+    assert hist[0]["source"] == "usage (fallback)"
+    assert hist[0]["context_window_size"] == 2 + 100 + 6000
+
+
+def test_result_history_excludes_empty_measurement_rows(tmp_path):
+    """iterations も top-level usage tokens も無い result event (window 0) は除外。
+    is_error の有無に関わらず、実測ゼロ行はノイズとして落とす。"""
+    sess = _write_results(tmp_path, [
+        {"is_error": False, "_audit_timestamp": "ts-a", "usage": {}},
+        {"is_error": False, "_audit_timestamp": "ts-b"},               # usage キーすら無い
+        {"is_error": True,  "_audit_timestamp": "ts-c", "usage": {}},  # error かつ実測ゼロ
+    ])
+    hist = a.result_history(sess, 10)
+    assert hist == []
+
+
+def test_result_history_keeps_usage_bearing_error_rows(tmp_path):
+    """is_error でも実測がある行 (失敗 / overflow turn の spike) は残し、is_error flag で示す。"""
+    sess = _write_results(tmp_path, [
+        {"is_error": True, "_audit_timestamp": "ts-err", "usage": _iter_usage(7000)},
+    ])
+    hist = a.result_history(sess, 10)
+    assert len(hist) == 1
+    assert hist[0]["context_window_size"] == 2 + 100 + 7000
+    assert hist[0]["is_error"] is True
+
+
+def test_result_history_returns_empty_for_nonpositive_n(tmp_path):
+    """n<=0 は helper レベルでも空を返す (desktop の guard と整合)。"""
+    sess = _write_results(tmp_path, [
+        {"is_error": False, "_audit_timestamp": "ts-a", "usage": _iter_usage(1000)},
+    ])
+    assert a.result_history(sess, 0) == []
+    assert a.result_history(sess, -1) == []
+
+
+def test_result_history_fills_n_with_valid_skipping_empty(tmp_path):
+    """window 0 の空行のみ飛ばし、実測行 (error 含む) で n を満たす (newest-first)。"""
+    sess = _write_results(tmp_path, [
+        {"is_error": False, "_audit_timestamp": "t1", "usage": _iter_usage(1111)},  # 最古
+        {"is_error": False, "_audit_timestamp": "t2", "usage": {}},                  # 空 → skip
+        {"is_error": False, "_audit_timestamp": "t3", "usage": _iter_usage(3333)},
+        {"is_error": True,  "_audit_timestamp": "t4", "usage": _iter_usage(4444)},   # error+実測 → 残す
+        {"is_error": False, "_audit_timestamp": "t5", "usage": _iter_usage(5555)},   # 最新
+    ])
+    hist = a.result_history(sess, 3)
+    assert [h["ts"] for h in hist] == ["t5", "t4", "t3"]  # 空(t2)のみ skip、error(t4)は残る
+    assert all(h["context_window_size"] > 0 for h in hist)
 
 
 def test_latest_assistant_usage(audit_session):
