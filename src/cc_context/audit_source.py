@@ -275,3 +275,37 @@ def session_meta(session_dir: Path) -> dict:
         "system_prompt_length": len(data.get("systemPrompt") or ""),
         "source_file": local_json.name,  # basename only — 絶対パスは環境固有値なので返さない (docstring の whitelist 方針と整合)
     }
+
+
+class AuditSource:
+    """Desktop (Cowork) 用 Source: host の audit.jsonl を session_id で解決し contract 化する。
+
+    core.build_current_usage(AuditSource(), session_id, ...) から使う。鮮度は当該 assistant
+    event の `_audit_timestamp` を基準にする。raw 取得は module 関数 (resolve_session 等) に
+    委譲し、staleness 判定・status 語彙は core に統一。"""
+
+    session_id_kind = "cowork_local"
+    stale_label = "audit"
+    precise_hint = "正確には session_id（作業ディレクトリの local_<uuid>）を渡してください。"
+
+    def resolve(self, session_id: str | None) -> tuple[Path, bool]:
+        # 明示 session_id も COWORK_CONTEXT_SESSION_ID env も無い時だけ「自動選択」
+        auto_selected = not session_id and not os.environ.get("COWORK_CONTEXT_SESSION_ID")
+        return resolve_session(session_id), auto_selected  # 不在は FileNotFoundError
+
+    def source_file(self, handle: Path) -> str:
+        return "audit.jsonl"  # basename only — source は session_id で特定可
+
+    def build_contract(self, session_dir: Path, now_ts: int) -> dict:
+        got = latest_assistant_usage(session_dir)
+        if got is None:
+            return {"error": "No assistant event", "session_id": session_dir.name}
+        usage, model, audit_ts = got
+        out = core.usage_to_contract(usage, model)
+        out["session_id_kind"] = self.session_id_kind
+        out["session_id"] = session_dir.name
+        out["source_file"] = "audit.jsonl"
+        out["rate_limits"] = latest_rate_limits(session_dir)
+        out["last_event_ts"] = audit_ts if isinstance(audit_ts, str) else None
+        out["last_event_age_seconds"] = age_seconds(audit_ts)
+        return out
