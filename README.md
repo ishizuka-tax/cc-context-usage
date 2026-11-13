@@ -209,3 +209,23 @@ wrapper. Maintenance is part-time, no SLA; design discussions welcome via Discus
 ## License
 
 [Apache-2.0](LICENSE). See [`NOTICE`](NOTICE) and [`SECURITY.md`](SECURITY.md).
+
+## claude-discipline#844 で移した規則
+
+<!-- moved-from: /home/claude/.claude/projects/-home-claude-projects/memory/reference_public_mcp_distribution_cross_os.md reference_public_mcp_distribution_cross_os.md (claude-discipline#844 pt-mem-168) -->
+- [MCP 配布の公式作法と他 OS の落とし穴](reference_public_mcp_distribution_cross_os.md) — CLI=claude mcp add / Desktop=MCPB
+
+MCP server / installer を公開配布する際の知見（2026-06 cc-context-usage）。
+
+**公式インストール作法は存在する（車輪の再発明を避ける）:**
+- **CLI**: `claude mcp add --transport <...> --scope user <name> <cmd>` が公式。`--scope user` は `~/.claude.json` に保存。
+- **Desktop**: 旧来は `claude_desktop_config.json` 手編集だったが、公式は **MCPB（MCP Bundle）= ランタイム同梱の単一ファイル install** を新方式として用意。手編集は BOM/indent/scope 事故の温床。
+- **MCPB 採否の判断**: 業務ロジックが純 stdlib でも **FastMCP→pydantic_core（Rust ネイティブ拡張）** 依存があると Windows 向けネイティブ wheel 同梱が fragile。pip 版を先に公開し、FastMCP→stdlib stdio 置換後に MCPB 化、と段階を切り分けてよい。
+
+**公開＝初めて他人の OS（特に Windows/Desktop）で動く:**
+- **Microsoft Store stub python**（`WindowsApps\python.exe`）が venv を壊す → installer に `-PythonExe` 引数 + 堅牢化。
+- **UTF-8 BOM / wide indent**（PowerShell 5.1 由来）で config パース事故 → BOM 無し・2-space で書く。
+- **ファイルロック**（Claude Desktop 起動中は venv 削除不可）→「先に Desktop を終了」警告。
+- これらは CLI(Linux) 開発では一切見えない。Desktop インストーラは別途堅牢化が要る。
+
+関連: [[feedback_public_release_checklist]] / skill github-ops の SKILL.md「2. Permission Boundaries」配下「repo 管理と PR merge は 403 / 401」（memory から移送済み）。MCP server 構築一般は mcp-server-dev skill 群を参照。
