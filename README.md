@@ -213,7 +213,7 @@ wrapper. Maintenance is part-time, no SLA; design discussions welcome via Discus
 ## claude-discipline#844 で移した規則
 
 <!-- moved-from: /home/claude/.claude/projects/-home-claude-projects/memory/reference_public_mcp_distribution_cross_os.md reference_public_mcp_distribution_cross_os.md (claude-discipline#844 pt-mem-168) -->
-- [MCP 配布の公式作法と他 OS の落とし穴](reference_public_mcp_distribution_cross_os.md) — CLI=claude mcp add / Desktop=MCPB
+- MCP 配布の公式作法と他 OS の落とし穴 — CLI=claude mcp add / Desktop=MCPB
 
 MCP server / installer を公開配布する際の知見（2026-06 cc-context-usage）。
 
